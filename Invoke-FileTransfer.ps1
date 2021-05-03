@@ -1,7 +1,7 @@
 ﻿function Invoke-FileTransfer {
 #.SYNOPSIS
 # Python x PowerShell user-authentication based file transfer via Flask web server (client-side).
-# ARBITRARY VERSION NUMBER:  1.0.0
+# ARBITRARY VERSION NUMBER:  1.1.0
 # AUTHOR:  Tyler McCann (@tyler.rar)
 #
 #.DESCRIPTION
@@ -64,13 +64,20 @@
         [switch] $Help
     )
 
+
+    # Return Get-Help information
+    if ($Help) { return Get-Help Invoke-FileTransfer }
+
+    # Failed to specify whether to download from or upload to server
+    elseif (!$Download -and !$Upload) { return (Write-Host 'No action specified.' -ForegroundColor Red) }
+
+
     # Internal Functions
     function HTTPS-Bypass ([switch]$Undo) {
 
         if ($Undo) { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $NULL }
 
         else {
-
             # [!] Required by non-Core PowerShell for self-signed certificate bypass (HTTPS).
             $CertBypass = @'
 using System;
@@ -97,8 +104,55 @@ public class WindowsPowerShellCerts
         
 }
 '@
+
             Add-Type $CertBypass
             [WindowsPowerShellCerts]::Bypass()
+        }
+    }
+    function Server-Login {
+        
+        # Windows PowerShell Self-Signed Certificate Bypass
+        Try {
+
+            if ($PSEdition -ne 'Core') {
+                HTTPS-Bypass
+                $LoginResponse = (Invoke-WebRequest $LoginPage -Body @{username="$ServerUsername";password="$ServerPassword"} -Method POST -SessionVariable 'SessionID').content
+            }
+
+            else {
+                $LoginResponse = (Invoke-WebRequest $LoginPage -SkipCertificateCheck -Body @{username="$ServerUsername";password="$ServerPassword"} -Method POST -SessionVariable 'SessionID').content
+            }
+
+
+            if ($LoginResponse -ne 'SUCCESSFUL LOGIN') {
+
+                Write-Host "`nServer Response ($Protocol): " -NoNewline -ForegroundColor Yellow
+                Write-Host $LoginResponse
+
+                return
+            }
+        }
+
+        # No response from the server
+        Catch { 
+        
+            Write-Host "`nSystem Response (Client): " -NoNewline -ForegroundColor Yellow
+            Write-Host "NO CONNECTION COULD BE MADE"
+        
+            return
+        }
+
+
+        return $SessionID
+    }
+    function Server-Logout {
+        
+        # Logout / Remove Self-Signed Certificate Bypass (Windows PowerShell)
+        if ($PSEdition -eq 'Core') { Invoke-WebRequest $LogoutPage -SkipCertificateCheck -WebSession $SessionID | Out-Null }
+
+        else {
+            Invoke-WebRequest $LogoutPage -WebSession $SessionID | Out-Null
+            HTTPS-Bypass -Undo
         }
     }
     function Server-Upload {
@@ -169,6 +223,7 @@ namespace SelfSignedCerts
         $Handler = [System.Net.Http.HttpClientHandler]::new()
         $Handler.CookieContainer = $SessionID.Cookies
 
+
         if ($Protocol -eq 'HTTPS') {
             $Handler.ServerCertificateCustomValidationCallback = [SelfSignedCerts.Bypass]::ValidationCallback
         }
@@ -209,9 +264,10 @@ namespace SelfSignedCerts
 
 
         # This error will appear if you put in an incorrect URL (or other less obvious things)
-        Catch { 
-            Write-Host 'Failed to reach the server!' -ForegroundColor DarkRed
-            return
+        Catch {
+
+            Write-Host "`nSystem Response (Client): " -NoNewline -ForegroundColor Yellow
+            Write-Host "NO CONNECTION COULD BE MADE"
         }
 
 
@@ -234,24 +290,24 @@ namespace SelfSignedCerts
             Write-Host "SUCCESSFUL DOWNLOAD"
         }
 
+        # You have insuccifient permissions to write to your current directory (e.g., C:\Windows\System32)
+        Catch [System.UnauthorizedAccessException] {
+
+            Write-Host "`nSystem Response (Client): " -NoNewLine -ForegroundColor Yellow
+            Write-Host "ACCESS TO PATH DENIED"
+        }
 
         # File doesn't exist on the server
         Catch {
+
             Write-Host "`nServer Response ($Protocol): " -NoNewline -ForegroundColor Yellow
             Write-Host "FILE NOT FOUND"
         }
     }
-    
-
-    # Return Get-Help information
-    if ($Help) { return Get-Help Invoke-FileTransfer }
-
-    # Failed to specify whether to download from or upload to server
-    elseif (!$Download -and !$Upload) { return (Write-Host 'No action specified.' -ForegroundColor Red) }
-
+ 
 
     # Prompt Header
-    if (!$File -or $URL) { Write-Host "[TRANSMISSION DATA]" -ForegroundColor Green } 
+    if (!$File -or !$URL) { Write-Host "[TRANSMISSION DATA]" -ForegroundColor Green } 
 
 
     # Prompt for File
@@ -263,7 +319,10 @@ namespace SelfSignedCerts
         if (Test-Path -LiteralPath $File) { $File = (Get-Item -LiteralPath $File).FullName }
     
         else {
-            Write-Host 'File does not exist!' -ForegroundColor DarkRed
+            
+            Write-Host "`nSystem Response (Client): " -NoNewline -ForegroundColor Yellow
+            Write-Host "FILE NOT FOUND"
+            
             return
         }
     }
@@ -273,11 +332,15 @@ namespace SelfSignedCerts
     # Prompt for Server URL
     if ($URL -eq '<url>') { Write-Host '- URL: ' -NoNewline -ForegroundColor Yellow ; $URL = Read-Host }
 
+
     # Verify protocol
-    if ($URL -like "https://*") { $Protocol = 'HTTPS' }
+    if ($URL -like "https://*")     { $Protocol = 'HTTPS' }
     elseif ( $URL -like "http://*") { $Protocol = 'HTTP' }
-    else {
-        Write-Host 'URL neither HTTP nor HTTPS!' -ForegroundColor DarkRed
+    else { 
+        
+        Write-Host "`nSystem Response (Client): " -NoNewline -ForegroundColor Yellow
+        Write-Host "URL NEITHER HTTP NOR HTTPS"
+
         return
     }
 
@@ -295,31 +358,16 @@ namespace SelfSignedCerts
     Write-Host '- Password: ' -NoNewLine -ForegroundColor Yellow ; $ServerPassword = Read-Host
 
 
-    # Windows PowerShell Self-Signed Certificate Bypass
-    if ($PSEdition -ne 'Core') {
-        HTTPS-Bypass
-        $LoginResponse = (Invoke-WebRequest $LoginPage -Body @{username="$ServerUsername";password="$ServerPassword"} -Method POST -SessionVariable 'SessionID').content
-    }
-    else { $LoginResponse = (Invoke-WebRequest $LoginPage -SkipCertificateCheck -Body @{username="$ServerUsername";password="$ServerPassword"} -Method POST -SessionVariable 'SessionID').content }
-
-
-    if ($LoginResponse -ne 'SUCCESSFUL LOGIN') {
-
-        Write-Host "`nServer Response ($Protocol): " -NoNewline -ForegroundColor Yellow
-        Write-Host $LoginResponse
-
-        return
-    }
+    # Verify credentials
+    $SessionID = Server-Login
+    if (!$SessionID) { return }
 
     
     # Main
     if ($Download)   { Server-Download }
     elseif ($Upload) { Server-Upload }
 
-    # Logout / Remove Self-Signed Certificate Bypass (Windows PowerShell)
-    if ($PSEdition -eq 'Core') { Invoke-WebRequest $LogoutPage -SkipCertificateCheck -WebSession $SessionID | Out-Null }
-    else {
-        Invoke-WebRequest $LogoutPage -WebSession $SessionID | Out-Null
-        HTTPS-Bypass -Undo
-    }
+
+    # Kill session
+    Server-Logout
 }
