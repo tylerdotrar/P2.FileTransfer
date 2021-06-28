@@ -2,17 +2,17 @@
 ----------------------------------
 AUTHOR:  Tyler McCann (@tyler.rar)
 ----------------------------------
-
 This optional module has been added to expedite the process of loading scripts / repositories
 into your PowerShell session via the $PROFILE.  Not necessary, but I figured I'd include it.
 
-The code below is a small function I keep in my $PROFILE to quickly import repos into my current
+The code below is a small function I keep in my $PROFILE to quickly import repos into my
 session regardless of my current directory, because I'm lazy. Just add a name and .psm1 path 
-to the $Available hashtable for whatever repositories you want to easy access to.
+to the $Available hashtable for whatever repositories you want quick access to.
 
 To import a module, use:          Import <name>
 To hide terminal output, use:     Import <name> -Silent
 To list available modules, use:   Import -List
+
 
 $PROFILE SYNTAX:
 ------------------------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ function Import ($Suite,[switch]$List,[switch]$Silent) {
             }
 	        else {
                 if (!$Silent) {
-	                Write-Host 'Failed to Import: ' -NoNewLine -ForegroundColor Red
+	                Write-Host 'Unsuccessfully Imported: ' -NoNewLine -ForegroundColor Red
 	                Write-Host "[$($Option.ToUpper())]"
                 }
 	        }
