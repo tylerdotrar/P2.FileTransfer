@@ -1,63 +1,65 @@
 ﻿function Invoke-FileTransfer {
 #.SYNOPSIS
 # Python x PowerShell based file transfer via user-authentication based Flask web server.
-# ARBITRARY VERSION NUMBER:  2.0.0
-# AUTHOR:  Tyler McCann (@tyler.rar)
+# ARBITRARY VERSION NUMBER:  2.1.0
+# AUTHOR:  Tyler McCann (@tylerdotrar)
 #
 #.DESCRIPTION
 # This script is designed to transfer files (upload, download, and read) to/from a custom Python-based flask web 
 # server, supporting both HTTP and HTTPS protocols (essentially a rudimentary C2 server).  The Python web server
-# should only accept files sent from this script due to a modified Content-Disposition header.  Communications
-# will only work if the user inputs the authorized credentials for the web server.  If PowerShell Core is used, 
-# file MIME types are determined based off of a hard-coded list of file extensions.  If Windows PowerShell is
-# used, MIME types are automatically determined based off of file content.
+# should only accept files sent from this script due to a modified Content-Disposition header.  As of version
+# 2.1.0, null authentication is allowed if set server-side, otherwise communications will require valid
+# credentials for the web server.  If PowerShell Core is used, file MIME types are determined based off of a 
+# hard-coded list of file extensions due to .NET Core not supporting the MimeMapping class.  If Windows PowerShell
+# is used, MIME types are automatically determined based off of file content.
 #
-# -- Alternate data streams (ADS) are NOT supported.
-# -- Supports Windows PowerShell and PowerShell Core.
-# -- Downloads have progress bars.
+# -- v2.0.0: Alternate data streams (ADS) are NOT supported.
+# -- v2.0.0: Supports Windows PowerShell and PowerShell Core.
+# -- v2.0.0: Downloads have progress bars.
+# -- v2.1.0: Null authentication support.
+# 
 #
 # Parameters:
-#    -File          -->   File to upload/download/read
-#
-#    -Credentials   -->   Create credential file or use stored credentials
-#    -URL           -->   URL of the web server [ http(s)://<ip>:<port> ]
-#    -Username      -->   Username to authenticate with server
-#    -Password      -->   Password of authenticated user
-#
-#    -Query         -->   Return list of all files currently being hosted
+#    // Actions //
+#    -List          -->   Return list of all files currently being hosted
 #    -Upload        -->   Upload a file to the web server
 #    -Download      -->   Download a file from the web server
-#    -Content       -->   Return raw text from file
-#    
+#    -Raw           -->   Return raw text from file
 #    -Help          -->   Return help information
+#
+#    // Targets //
+#    -File          -->   File to upload/download/read
+#    -URL           -->   URL of the web server [ http(s)://<ip>:<port> ]
+#
+#    // Authentication //
+#    -Credentials   -->   Create credential file or use stored credentials
+#    -Username      -->   Username to authenticate with server
+#    -Password      -->   Password of authenticated user
+#    
 #    
 # Example Usage:
-#    []  PS C:\Users\Bobby> Invoke-FileTransfer -Query -URL https://192.168.2.69:54321
+#    []  PS C:\Users\Bobby> Invoke-FileTransfer -List -URL https://192.168.2.69:54321
 #        Input connection data or use credential file.
 #
-#    []  PS C:\Users\Bobby> p2ft -u SuperCoolScript.ps1 https://192.168.2.69:54321 root password1
+#    []  PS C:\Users\Bobby> p2ft -u SuperCoolScript.ps1 https://192.168.2.69:54321 root password123
 #        File successfully uploaded.
 #
 #    []  PS C:\Users\Bobby> Invoke-FileTransfer -Credentials
-#        ╔═════════════════╗
-#        ║ Credential File ║
-#        ╚═════════════════╝
-#        -- URL: https://192.168.2.69:54321
-#        -- Username: root
-#        -- Password: password1
+#        Credential File:
+#        [+] URL: https://192.168.2.69:54321
+#        [+] Username: root
+#        [+] Password: password123
 #
 #        Save configuration? (yes/no): y
 #        Credential file generated.
 #
-#    []  PS C:\Users\Bobby> p2ft -Credentials -Query
-#        ╔═════════════════╗
-#        ║ Available Files ║
-#        ╚═════════════════╝     
-#        -- coolkatz.zip
-#        -- passwords.txt
-#        -- ambiguous.png
+#    []  PS C:\Users\Bobby> p2ft -Credentials -List
+#        Available Files:   
+#        [+] coolkatz.zip
+#        [+] passwords.txt
+#        [+] ambiguous.png
 #
-#    []  PS C:\Users\Bobby> Invoke-FileTransfer -Download -File coolkatz.zip -Credentials
+#    []  PS C:\Users\Bobby> p2ft -Download coolkatz.zip -Credentials
 #        File successfully downloaded.
 #
 #.LINK
@@ -66,18 +68,24 @@
     [Alias('p2ft')]
 
     Param (
-        [string] $File,
-        [switch] $Credentials,
-        [string] $URL,
-        [string] $Username,
-        [string] $Password,
+        # Actions
+        [switch] $List,
         [switch] $Upload,
         [switch] $Download,
-        [switch] $Query,
-        [switch] $Content,
-        [switch] $Help
+        [switch] $Raw,
+        [switch] $Help,
+
+        # Target
+        [string] $File,
+        [string] $URL,
+
+        # Authentication
+        [switch] $Credentials,
+        [string] $Username,
+        [string] $Password
     )
 
+    # Backend
     function Server-Credentials ([switch]$Generate,[switch]$Retrieve) {
         
         function Base64 ([switch]$Encode,[switch]$Decode,[string]$Message) {
@@ -109,32 +117,30 @@
             $RegexString = '^http[s]?://' + $IPRegex + ':' + $PortRegex + '$'
     
             while ($TRUE) {
-        
+
                 Clear-Host
                 Write-Host "PS $PWD>"
+                Write-host 'Credential File:' -ForegroundColor Yellow
 
-                Write-Host "╔═════════════════╗`n║" -NoNewline
-                Write-Host ' Credential File ' -NoNewline -ForegroundColor Yellow
-                Write-Host "║`n╚═════════════════╝"
 
-                # Convoluted Logic to Allow for 'back' Functionality
-                Write-Host '-- ' -NoNewline
-                Write-Host 'URL: ' -NoNewline -ForegroundColor Yellow
+                ### Convoluted Logic to Allow for 'back' Functionality
+                Write-Host '[+] ' -ForegroundColor Green -NoNewline
+                Write-Host 'URL: ' -NoNewline
 
                 if ($URL)      {
                     Write-Host $URL
-                    Write-Host '-- ' -NoNewline
-                    Write-Host 'Username: ' -NoNewline -ForegroundColor Yellow
+                    Write-Host '[+] ' -ForegroundColor Green -NoNewline
+                    Write-Host 'Username: ' -NoNewline
                 }
                 if ($Username) {
                     Write-Host $Username
-                    Write-Host '-- ' -NoNewline
-                    Write-Host 'Password: ' -NoNewline -ForegroundColor Yellow
+                    Write-Host '[+] ' -ForegroundColor Green -NoNewline
+                    Write-Host 'Password: ' -NoNewline
 
                 }
                 if ($Password) {
                     Write-Host $Password
-                    Write-Host "`nSave configuration? (yes/no): " -NoNewLine -ForegroundColor Yellow
+                    Write-Host "`nSave configuration? (yes/no): " -ForegroundColor Yellow -NoNewLine 
                 }
 
                 # Save or Reset & Exit Loop
@@ -146,9 +152,10 @@
                     continue
                 }
                 elseif ($SaveConfig) { Write-Host $SaveConfig ; break }
-                # End Convoluted Logic
+                ### End Convoluted Logic
 
-                # User Input
+
+                # User Input 1
                 if (!$URL) {
                     
                     $URL = Read-host
@@ -157,6 +164,8 @@
                     elseif ($URL -match $RegexString) { continue }
                     else { Write-Host "`nInvalid URL." -ForegroundColor Red ; Start-Sleep -Seconds 1 ; $URL = $NULL }
                 }
+
+                # User Input 2
                 elseif (!$Username) {
                     
                     $Username = Read-Host
@@ -168,6 +177,8 @@
                     }
                     else { continue }
                 }
+
+                # User Input 3
                 elseif (!$Password) {
 
                     $Password = Read-Host
@@ -179,6 +190,8 @@
                     }
                     else { continue }
                 }
+
+                # User Input 4
                 elseif (!$SaveConfig) {
 
                     $SaveConfig = Read-Host
@@ -194,6 +207,7 @@
                     else { Write-Host "`nInvalid input." -ForegroundColor Red ; Start-Sleep -Seconds 1 ; $SaveConfig = $NULL }
                 }
             }
+
 
             # Encode Credentials
             $EncodedURL      = Base64 -Encode $URL
@@ -211,7 +225,7 @@
         ### Self-Signed Certificate / HTTPS Bypass ###
 
         # Remove Certificate Bypass at the end of Script
-        if ($Undo) { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $NULL }
+        if ($Undo) { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $NULL ; return }
 
         $CertBypass = @'
 using System;
@@ -285,6 +299,7 @@ namespace SelfSignedCerts
         }
     }
     
+    # Primary Functionality
     function Invoke-Download {
 
         Try {
@@ -336,12 +351,13 @@ namespace SelfSignedCerts
 
             # Extension-based MIME type / Content-Type (Hard-Coded)
             $MimeTypeMap = @{
-               
-                '.pdf'   =  'application/pdf';
+                
+                '.mp4'   =  'video/mp4';
                 '.jpg'   =  'image/jpeg';
                 '.jpeg'  =  'image/jpeg';
                 '.png'   =  'image/png';
                 '.gif'   =  'image/gif';
+                '.pdf'   =  'application/pdf';
                 '.zip'   =  'application/zip';
                 '.rar'   =  'application/x-rar-compressed';
                 '.7z'    =  'application/x-7z-compressed';
@@ -350,7 +366,12 @@ namespace SelfSignedCerts
                 '.txt'   =  'text/plain';
                 '.json'  =  'application/json';
                 '.xml'   =  'application/xml';
-                '.dll'   =  'application/x-msdownload'
+                '.dll'   =  'application/x-msdownload';
+                '.exe'   =  'application/octet-stream';
+                '.ps1'   =  'application/octet-stream';
+                '.doc'   =  'application/msword';
+                '.docx'  =  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
             }
 
             $Extension = (Get-Item $FullFilepath).Extension.ToLower()
@@ -386,7 +407,7 @@ namespace SelfSignedCerts
         $DispositionHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new('form-data')
 
         # Custom Content-Disposition header name (Custom Python Server Specific)
-        $DispositionHeader.Name     = 'TYLER.RAR'
+        $DispositionHeader.Name     = 'TYLERDOTRAR'
         $DispositionHeader.FileName = $File
 
         $StreamContent                            = [System.Net.Http.StreamContent]::new($FileStream)
@@ -412,7 +433,7 @@ namespace SelfSignedCerts
     }
     function Invoke-FileQuery {
    
-        # Query All Available Files on Server
+        # Query List of All Available Files on Server
         $Client   = [System.Net.WebClient]::new()
         $Client.Headers.Add('Content-Type',$ContentType)
         $Client.Headers.Add('Cookie',$Cookies)
@@ -420,14 +441,12 @@ namespace SelfSignedCerts
 
         if (!$Response) { return (Write-Host 'No files currently available.' -ForegroundColor Red) }
 
-        Write-Host "╔═════════════════╗`n║" -NoNewline
-        Write-Host ' Available Files ' -NoNewline -ForegroundColor Yellow
-        Write-Host "║`n╚═════════════════╝"
-
+        # Output Available Files
+        Write-Host "Available Files:" -ForegroundColor Yellow
         $FileList = $Response.Split(' ')
-        foreach ($Available in $FileList) { 
-            Write-Host '-- ' -NoNewline
-            Write-Host $Available -ForegroundColor Yellow
+        foreach ($Available in $FileList) {
+            Write-Host '[+] ' -ForegroundColor Green -NoNewline
+            Write-Host $Available
         }
     }
     function Invoke-FileContent {
@@ -445,12 +464,15 @@ namespace SelfSignedCerts
     }
 
  
-    # Get-Help and Usage Correction
-    if ($Help)                                              { return (Get-Help Invoke-FileTransfer)                           }
-    if ($File -and !$Download -and !$Upload -and !$Content) { return (Write-Host 'No action specified.' -ForegroundColor Red) }
+    # Return Help Information
+    if ($Help) { return (Get-Help Invoke-FileTransfer) }
+
+
+    # Error Correction
+    if ($File -and !$Download -and !$Upload -and !$Raw) { return (Write-Host 'No action specified.' -ForegroundColor Red) }
     if (!$File) {
-        if ($Download -or $Upload -or $Content)             { return (Write-Host 'Input file.' -ForegroundColor Red)          }
-        if (!$Credentials -and !$Query)                     { return (Write-Host 'Missing parameters.' -ForegroundColor Red)  }
+        if ($Download -or $Upload -or $Raw)             { return (Write-Host 'Input file.' -ForegroundColor Red)          }
+        if (!$Credentials -and !$List)                  { return (Write-Host 'Missing parameters.' -ForegroundColor Red)  }
     }
     
 
@@ -459,8 +481,10 @@ namespace SelfSignedCerts
        
         $CredentialFile = $PSScriptRoot + '\var\credentials.json'
 
-        if (!$File -and !$Download -and !$Upload -and !$Content -and !$Query) { return (Server-Credentials -Generate) }
+        # Create new credential file
+        if (!$File -and !$Download -and !$Upload -and !$Raw -and !$List) { return (Server-Credentials -Generate) }
 
+        # Use existing credential file
         elseif (Test-Path -LiteralPath $CredentialFile) {
 
             $ServerCredentials = Server-Credentials -Retrieve
@@ -486,6 +510,8 @@ namespace SelfSignedCerts
     $ContentType  = 'application/x-www-form-urlencoded'
     $LoginCreds   = "username=$Username&password=$Password"
 
+
+    # Server-side Error Messages
     $ErrorMessages  = @(
         'LOGIN REQUIRED',
         'UNSUCCESSFUL LOGIN',
@@ -503,16 +529,21 @@ namespace SelfSignedCerts
 
 
     # Main Functionality
-    if ($Query) { Invoke-FileQuery }
+    if ($List) { Invoke-FileQuery }
+
     else {
         $File = Split-Path -Leaf $File
 
-        if ($Content) { Invoke-FileContent }
+        # Return Raw File Contents
+        if ($Raw) { Invoke-FileContent }
 
+        # Download File
         elseif ($Download)   {
             $FileOutput  = $PWD.Path + "\$File"
             Invoke-Download
         }
+
+        # Upload File
         elseif ($Upload) { 
             $FullFilepath = (Get-Item -LiteralPath $File).FullName
             Invoke-Upload

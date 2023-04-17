@@ -10,12 +10,13 @@ app = flask.Flask(__name__, static_url_path='')
 
 
 # CONFIG.INI
-app.secret_key = config.get('server','secret_key')
+app.secret_key    = config.get('server','secret_key')
 UPLOAD_EXTENSIONS = config.get('server','allowed_extensions')
-CLIENT_DOWNLOADS = config.get('directories','download')
-CLIENT_UPLOADS = config.get('directories','upload')
-SERVER_USERNAME = config.get('credentials','username')
-SERVER_PASSWORD = config.get('credentials','password')
+CLIENT_DOWNLOADS  = config.get('directories','download')
+CLIENT_UPLOADS    = config.get('directories','upload')
+SERVER_USERNAME   = config.get('credentials','username')
+SERVER_PASSWORD   = config.get('credentials','password')
+NULL_LOGIN        = config.get('credentials','allow_null_login')
 
 
 # LOGIN FUNCTION
@@ -42,6 +43,9 @@ def Login():
     if request.form['username'] == SERVER_USERNAME and request.form['password'] == SERVER_PASSWORD:
         session['logged_in'] = True
         return 'SUCCESSFUL LOGIN'
+    elif NULL_LOGIN == 'true':
+        session['logged_in'] = True
+        return 'NULL LOGIN AUTHORIZED'
     else:
         return 'UNSUCCESSFUL LOGIN'
 
@@ -67,6 +71,7 @@ def QueryFiles():
 def ShowContent(file_name):
     path = CLIENT_DOWNLOADS + '/' + file_name
     isFile = os.path.isfile(path)
+    
     if isFile:
         try:
             file_content = GetFileContents(path)
@@ -74,6 +79,7 @@ def ShowContent(file_name):
         except:
             errormsg = 'NOT HUMAN READABLE'
             return errormsg
+            
     return 'FILE NOT FOUND'
 
 
@@ -82,7 +88,7 @@ def ShowContent(file_name):
 @login_required
 def DownloadFile(file_name):
     try:
-        return send_from_directory(CLIENT_DOWNLOADS, filename=file_name, as_attachment=True)
+        return send_from_directory(CLIENT_DOWNLOADS, file_name, as_attachment=True)
     except FileNotFoundError:
         abort(404)
 
@@ -91,12 +97,14 @@ def DownloadFile(file_name):
 @app.route('/en-us/p2ft/upload', methods=['POST'])
 @login_required
 def UploadFile():
-    uploaded_file = request.files['TYLER.RAR']
+    uploaded_file = request.files['TYLERDOTRAR']
     file_name = secure_filename(uploaded_file.filename)
+    
     if file_name != '':
         file_ext = os.path.splitext(file_name)[1]
         if file_ext not in UPLOAD_EXTENSIONS:
             return 'FILE NOT ALLOWED'
+            
         uploaded_file.save(os.path.join(CLIENT_UPLOADS, file_name))
         return 'SUCCESSFUL UPLOAD'
     return 'NULL FILENAME'
